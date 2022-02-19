@@ -14,6 +14,7 @@ library(data.table)
 library(leaflet)
 library(tidyverse)
 library(rdrop2)
+library(GGally)
 ```
 
 # Learning Goals
@@ -86,19 +87,24 @@ It looks like the elevation variable has observations with 9999.0, which is prob
 After checking the data we should make the appropriate modifications. Replace elevations with 9999 as `NA`.
 
 ```{r}
+met$elev[met$elev == 9999.0] <- NA
+summary(met$elev)
 
+met <- met %>% mutate(elev = na_if(elev, 9999))
 ```
 At what elevation is the highest weather station?
 
-- Summarize here
+- The highest would be 4113.
 
 
 Now let's look at the data from this site
 ```{r}
-
+elev <- met[elev == max(elev, na.rm = T)]
+summary(elev)
+# met %>% subset(elev == max(met$elev)) %>% summary()
 ```
 
-- Summarize anything unusual
+- The minimum wind speed could reach 0.
 
 ### 5. Check the data against an external data source.
 
@@ -109,9 +115,12 @@ Google is your friend here.
 Fix any problems that arise in your checks.
 
 ```{r}
-
+met <- met[temp>-15]
+met <- met[elev>-13]
+met2 <- met[order(temp)]
+head(met2)
 ```
- - Summarize anything that was removed
+ - We removed those with temperature smaller than -15, and those with elevation not in the range of [-13,4113].
 
 ### 6. Calculate summary statistics
 
@@ -120,10 +129,18 @@ Remember to keep the initial question in mind. We want to pick out the weather s
 Some ideas: select the weather station with maximum elevation; look at the correlation between temperature and wind speed; look at the correlation between temperature and wind speed with hour and day of the month.
 
 ```{r}
-
+elev <- met[elev == max(elev, na.rm = T)]
+summary(elev)
 ```
 
 ```{r}
+cor(elev$temp, elev$wind.sp, use="complete")
+cor(elev$temp, elev$hour, use="complete")
+cor(elev$wind.sp, elev$day, use="complete")
+cor(elev$wind.sp, elev$hour, use="complete")
+cor(elev$temp, elev$day, use="complete")
+
+met %>% subset(elev == max(elev, na.rm=T)) %>% select(temp, wind.sp, hour, day) %>% GGally::ggpairs()
 
 ```
 
@@ -133,29 +150,35 @@ Some ideas: select the weather station with maximum elevation; look at the corre
 We should look at the distributions of all of the key variables (elevation, temp, wind speed) to make sure there are no remaining issues with the data.
 
 ```{r }
-
+hist(log(met$elev), breaks=100)
+hist(met$temp)
+hist(log(met$wind.sp))
 ```
 One thing we should consider for later analyses is to log transform wind speed and elevation as the are very skewed.
 
 Look at where the weather station with highest elevation is located (i.e. make a map!)
 
 ```{r}
-
+elev %>% leaflet %>% addProviderTiles("OpenStreetMap") %>% addCircles(lat = ~lat, lng = ~lon, opacity = 1, fillOpacity = 1, radius = 100)
 ```
 
-- Summarize
+- We presented the histograms for our key variables and a map for the weather station with highest elevation.
 
 Look at the time series of temperature and wind speed at this location. For this we will need to create a date-time variable for the x-axis.
 
 ```{r message=FALSE}
 library(lubridate)
-
+elev$date <- with(elev, ymd_h(paste(year, month, day, hour, sep=' ')))
+summary(elev$date)
+elev <- elev[order(date)]
+head(elev)
 ```
 
 With the date-time variable we can plot the time series of temperature and wind speed.
 
 ```{r}
-
+plot(elev$date, elev$temp, type='l')
+plot(elev$date, elev$wind.sp, type='l')
 ```
 Summarize any trends that you see in these time series plots.
 

@@ -63,8 +63,29 @@ met <- data.table::fread("met_all.gz")
 -   Create a categorical variable for elevation (breakpoint 252 m)
 
 ```{r, eval = TRUE, echo = FALSE}
-
-
+# Remove temperatures less than -17C
+met %>% filter(temp>=-17) %>%
+# Make sure there are no missing data in the key variables coded as 9999, 999, etc
+  na_if(9999) %>%
+#  Generate a date variable using the functions `as.Date()` (hint: You will need the following to create a date `paste(year, month, day, sep = "-")`).
+  mutate(date=as.Date(paste(year, month, day, sep="-"))) %>%
+# Using the `data.table::week` function, keep the observations of the first week of the month.
+  mutate(week=data.table::week(date)) %>% 
+  filter(week==min(week)) %>%
+# Compute the mean by station of the variables `temp`, `rh`, `wind.sp`, `vis.dist`, `dew.point`, `lat`,`lon`, and `elev`.
+  group_by(USAFID) %>% 
+  summarise(temp=mean(temp, na.rm = T),
+            rh=mean(rh, na.rm = T),
+            wind.sp=mean(wind.sp, na.rm = T),
+            vis.dist=mean(vis.dist, na.rm = T),
+            dew.point=mean(dew.point, na.rm = T),
+            lat=mean(lat), lon=mean(lon),
+            elev=mean(elev, na.rm = T)) %>%
+# Create a region variable for NW, SW, NE, SE based on lon = -98.00 and lat = 39.71 degrees
+  mutate(region = ifelse(lat > 39.71, "north", "south")) %>%
+  mutate(region = paste(region, ifelse(lon > -98, "east", "west"))) %>%
+# Create a categorical variable for elevation (breakpoint 252 m)
+  mutate(elev_cat=ifelse(elev>252, "high", "low")) -> met_avg
 ```
 
 ### 3. Use `geom_violin` to examine the wind speed and dew point temperature by region
@@ -76,8 +97,11 @@ You saw how to use `geom_boxplot` in class. Try using `geom_violin` instead (tak
 -   Describe what you observe in the graph
 
 ```{r, eval = TRUE, echo = FALSE}
+met_avg %>% filter(! (region %in% NA)) %>% ggplot() + aes(x=1, y=wind.sp, fill=region) + geom_violin() + facet_wrap(~region)
 
+met_avg %>% filter(! (region %in% NA)) %>% ggplot() + aes(x=1, y=dew.point, fill=region) + geom_violin() + facet_wrap(~region)
 ```
+- I observed that the mean of wind speed in north west seems to be faster than north east, while the dew point temperature in north west seem to be higher than north east. 
 
 ### 4. Use `geom_jitter` with `stat_smooth` to examine the association between dew point temperature and wind speed by region
 
@@ -87,9 +111,11 @@ You saw how to use `geom_boxplot` in class. Try using `geom_violin` instead (tak
 -   Describe what you observe in the graph
 
 ```{r, eval = TRUE, echo = FALSE}
-
-  
+met_avg %>% filter(! (region %in% NA)) %>% ggplot() + aes(x=dew.point, y=wind.sp, color=region) + geom_jitter() + 
+# fit linear regression
+stat_smooth(method=lm)
 ```
+- I observed that the relationship between wind speed and dew point temp differs when regions are different.
 
 ### 5. Use `geom_bar` to create barplots of the weather stations by elevation category coloured by region
 
@@ -101,9 +127,9 @@ You saw how to use `geom_boxplot` in class. Try using `geom_violin` instead (tak
 -   Make sure to deal with `NA`
 
 ```{r warning=FALSE, message=FALSE, eval = TRUE, echo = FALSE}
-
-
+met_avg %>% filter(! (region %in% NA)) %>% ggplot() + aes(x=elev_cat, fill=region) + geom_bar(position = "dodge") + scale_fill_brewer(palette = "PuOr") + theme_minimal() + labs(title="Num of weather stations by elevation category and region", x="Elevation Category", y="count")
 ```
+- I observed that most weather stations are built in low elevation in south west.
 
 ### 6. Use `stat_summary` to examine mean dew point and wind speed by region with standard deviation error bars
 
@@ -113,11 +139,13 @@ You saw how to use `geom_boxplot` in class. Try using `geom_violin` instead (tak
 -   Describe the graph and what you observe
 
 ```{r, eval = TRUE, echo = TRUE}
+met_avg %>% filter(! (region %in% NA)) %>% ggplot() + aes(x=region, y=dew.point) + stat_summary(fun.data = "mean_sdl", geom = "errorbar") + stat_summary(fun.data = "mean_sdl")
 
+met_avg %>% filter(! (region %in% NA)) %>% ggplot() + aes(x=region, y=wind.sp) + stat_summary(fun.data = "mean_sdl", geom = "errorbar") + stat_summary(fun.data = "mean_sdl")
 ```
 
--   Dew point temperature is...
--   Wind speed is...
+-   The mean Dew point temperature is about 16 in north east, 12.5 in north west, 21 in south east, and 13 in south west.
+-   The mean Wind speed is about 1.7 in north east, 2.8 in north west, 1.7 in south east, and 3.2 in south west.
 
 ### 7. Make a map showing the spatial trend in relative h in the US
 
@@ -128,12 +156,35 @@ You saw how to use `geom_boxplot` in class. Try using `geom_violin` instead (tak
 -   Add a legend
 
 ```{r, eval = TRUE, echo = FALSE}
-
+top10 <- met_avg %>% arrange(desc(rh)) %>% slice_head(n=10)
+rh_pal <- colorNumeric(c('blue', 'yellow', 'red'), domain = met_avg$rh, na.color = NA)
+met_avg %>% drop_na() %>% leaflet() %>% addProviderTiles('OpenStreetMap') %>% addCircles(lat = ~lat, lng = ~lon, color=~rh_pal(rh), label=~paste(round(rh,2), 'rh'), opacity = 1, fillOpacity = 1, radius=~elev*10) %>% addMarkers(lat = ~lat, lng = ~lon, label = ~paste(round(rh,2), 'rh'), data = top10) %>% addLegend('bottomleft', pal = rh_pal, values=met_avg$rh, title="relative humidity", opacity=1)
 ```
 
--   Describe trend in RH across the US
+-   Describe trend in RH across the US. The humidity is higher in east, and lower when closer to west. It gets very low around Nevada and Las Vegas.
 
 ### 8. Use a ggplot extension
 
 -   Pick and extension (except cowplot) from [here](https://exts.ggplot2.tidyverse.org/gallery/) and make a plot of your choice using the met data (or met_avg)
 -   Might want to try examples that come with the extension first (e.g. ggtech, gganimate, ggforce)
+```{r}
+library(ggtech)
+
+# download.file("https://www.etsy.com/assets/type/Guardian-EgypTT-Text-Regular.ttf", "C:/Windows/Fonts/Guardian-EgypTT-Text-Regular.ttf", method="curl")
+
+# extrafont::font_import(pattern = 'Guardian-EgypTT-Text-Regular.ttf', prompt=FALSE)
+
+d <- qplot(temp, data = met_avg[met_avg$region %in%LETTERS[4:7], ], geom = "histogram", bins=30, fill = region)
+
+d + theme_tech(theme="etsy") + 
+  scale_fill_tech(theme="etsy") + 
+  labs(title="Temperature")
+```
+- The required font can't be installed into the Win10 Fonts directory because the Font folder is a system folder under the protection. Therefore, the plot can't be shown without that font. I'll do a ggthemes library instead.
+```{r}
+library(ggthemes)
+
+p <- met_avg %>% ggplot(aes(x=wind.sp, y=temp)) + geom_point() + stat_smooth(method=lm, color="red") + theme_economist() + scale_colour_economist() + ggtitle('temperature and wind speed are positively correlated')
+p
+```
+

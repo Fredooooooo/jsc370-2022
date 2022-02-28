@@ -1,0 +1,211 @@
+---
+title: "Homework 2"
+author: "You Peng"
+date: '2022-02-19'
+output: html_document
+---
+
+## Data Wrangling
+
+```{r setup, message=FALSE, echo=FALSE, warning=FALSE}
+#install.packages(c("data.table","leaflet", "rdrop2"))
+library(data.table)
+library(leaflet)
+library(tidyverse)
+library(rdrop2)
+library(GGally)
+library(scales)
+```
+
+```{r, message=FALSE, echo=FALSE, warning=FALSE}
+individual <- read.csv("chs_individual.csv")
+regional <- read.csv("chs_regional_geo.csv")
+df <- merge.data.frame(individual, regional, "townname")
+
+df <- df %>% group_by(male, hispanic) %>%
+  mutate_all(list(~ifelse(is.na(.), mean(., na.rm = TRUE),.)))
+df <- df %>%
+  mutate(townname=as.factor(townname)) %>% 
+  mutate(asthma=round(asthma)) %>%
+  mutate(father_asthma=round(father_asthma)) %>%
+  mutate(mother_asthma=round(mother_asthma)) %>%
+  mutate(wheeze=round(wheeze)) %>%
+  mutate(hayfever=round(hayfever)) %>%
+  mutate(allergy=round(allergy)) %>%
+  mutate(educ_parent=round(educ_parent)) %>%
+  mutate(smoke=round(smoke)) %>%
+  mutate(gasstove=round(gasstove)) %>%
+  mutate(obesity_level=case_when(
+    bmi < 14 ~ "underweight",
+    14 <= bmi & bmi < 22 ~ "normal",
+    22 <= bmi & bmi <= 24 ~ "overweight",
+    bmi > 24 ~ "obese"))
+```
+
+#### A table summarize about the obesity level:
+
+```{r, message=FALSE, echo=FALSE, warning=FALSE}
+df %>% group_by(obesity_level) %>% summarise(min_BMI = min(bmi), max_BMI = max(bmi), count = n())
+```
+
+We can see that most children had a normal obesity level. And only 35 children are in underweight obesity level, which is the smallest level. We can also check the min BMI and max BMI to see that levels are made correctly.
+
+#### Create new variable smoke_gas_exposure:
+
+```{r}
+df <- df %>% mutate(smoke_gas_exposure = as.factor(interaction(smoke, gasstove)))
+```
+
+Note that the first element in smoke_gas_exposure corresponds to the indicator for "second hand smoke", the second element corresponds to the indicator for gas exposure. For example, for pair (smoke, gas stove) being (0, 0), smoke_gas_exposure will take value 0.0; when it's (0, 1), smoke_gas_exposure will take value 0.1.
+
+#### Summary of "Forced expiratory volume in 1 second (ml)" and asthma indicator by town:
+
+```{r, message=FALSE, echo=FALSE, warning=FALSE}
+df %>% group_by(townname) %>% summarise(Mean_of_FEV = mean(fev), Sd_of_FEV = sqrt(var(fev)), Mean_of_asthma = mean(asthma), Sd_of_asthma = sqrt(var(asthma)))
+```
+
+#### Summary of "Forced expiratory volume in 1 second (ml)" and asthma indicator by sex:
+
+```{r, message=FALSE, echo=FALSE, warning=FALSE}
+df %>% group_by(male) %>% summarise(Mean_of_FEV = mean(fev), Sd_of_FEV = sqrt(var(fev)), Mean_of_asthma = mean(asthma), Sd_of_asthma = sqrt(var(asthma)))
+```
+
+#### Summary of "Forced expiratory volume in 1 second (ml)" and asthma indicator by obesity level:
+
+```{r, message=FALSE, echo=FALSE, warning=FALSE}
+df %>% group_by(obesity_level) %>% summarise(Mean_of_FEV = mean(fev), Sd_of_FEV = sqrt(var(fev)), Mean_of_asthma = mean(asthma), Sd_of_asthma = sqrt(var(asthma)))
+```
+
+#### Summary of "Forced expiratory volume in 1 second (ml)" and asthma indicator by smoke_gas_exposture:
+
+```{r, message=FALSE, echo=FALSE, warning=FALSE}
+df %>% group_by(smoke_gas_exposure) %>% summarise(Mean_of_FEV = mean(fev), Sd_of_FEV = sqrt(var(fev)), Mean_of_asthma = mean(asthma), Sd_of_asthma = sqrt(var(asthma)))
+```
+
+## Looking at the data
+
+### EDA
+
+```{r}
+dim(df)
+```
+
+The dataset has 1200 observations, which represent 1200 children. It has 51 variables, which includes both health characteristics of children and air quality measurements at the community level.
+
+#### Take a look at the first 6 rows and last 6 rows of the dataset:
+
+```{r, message=FALSE, echo=FALSE, warning=FALSE}
+head(df)
+tail(df)
+```
+
+#### Take a look at the BMIs of children overall:
+
+```{r, message=FALSE, echo=FALSE, warning=FALSE}
+summary(df$bmi)
+boxplot(df$bmi)
+```
+
+The mean BMI over all children is 18.5. We can see that there are some outliers had their BMI far higher than the mean of BMI overall. Those children might also have their forced expiratory volumes deviates from the general mean. Meanwhile, there aren't any outliers had their BMI below the first quantile.
+
+#### Take a look at the forced expiratory volumes of children overall:
+
+```{r, message=FALSE, echo=FALSE, warning=FALSE}
+summary(df$fev)
+boxplot(df$fev)
+```
+
+The mean FEV over all children is 2030. Unlike the situation in BMI, the outliers far above the mean or below the mean are about the same number.
+
+#### Take a look at the smoke and gas exposure of children overall:
+
+```{r, message=FALSE, echo=FALSE, warning=FALSE}
+df %>% group_by(smoke_gas_exposure) %>% summarise(count = n())
+```
+
+Note that most of the children are exposed to gas and not second hand smokes.
+
+#### Take a look at the PM2.5 mass of towns overall:
+
+```{r, message=FALSE, echo=FALSE, warning=FALSE}
+summary(df$pm25_mass)
+boxplot(df$pm25_mass)
+```
+
+The mean PM2.5 mass over all towns is 14.362. There are no outliers in PM2.5 mass's distribution. However, we can see that the distribution is right skewed, since the mean is larger than median.
+
+### Visualization
+
+```{r, message=FALSE, echo=FALSE, warning=FALSE}
+df %>% ggplot(aes(x = bmi, y = fev)) + geom_point() + geom_smooth(method='lm', formula= y~x) + ggtitle("Scatterplot of BMI vs. FEV") + xlab("BMI") + ylab("Forced expiratory volume in 1 second (ml)") + facet_wrap(df$townname)
+```
+
+From scatterplots of BMI versus forced expiratory volume, we can see a positive linear relationship between FEV and BMI, where FEV will be higher when BMI is higher in general. This positive pattern agrees on all 12 towns. From all these 12 towns, Upland tends to have the most steep slope, which means that children whose BMI is larger in this town tends to have a more significant increase in FEV. Alpine and Riverside tends to have similar and the most flat slope, which means that children whose BMI is larger in these two towns tends to have a less significant increase in FEV. It's also notable that children in most towns had their BMI between 12 and 35, except that two children in Riverside has their BMI over 40.
+
+```{r, message=FALSE, echo=FALSE, warning=FALSE}
+df %>% ggplot(aes(x=fev,fill = obesity_level)) + geom_histogram() + scale_fill_manual(values = c("yellow", "red", "blue", "#78BC61")) + theme_minimal() + labs(title = "Stacked histogram of FEV by BMI category")
+```
+
+From the histogram of FEV by obesity level, we can see a very large proportion of yellow on top of each FEV column. This indicates that most of children are in a normal obesity. This pattern is true across all segmentations of FEV, except for segmentations of FEV being around 2800. In those segmentations, children who are obese or overweight are more than children in normal level of obesity. It's also notable that children who are underweight only appear in groups of children which have FEV less than 2500. Similarly, children who are overweight only appear in groups of children which have FEV more than 1600. Children who are obese only appear in groups of children which have FEV more than 1750. This observation shows that children who are overweight or obese are more likely to have higher FEV compared to those who are underweight. Lastly, it's clear that most children's FEV is about 2100, and the distribution looks like a normal distribution with the mean at 2000.
+
+```{r, message=FALSE, echo=FALSE, warning=FALSE}
+df %>% ggplot(aes(x=fev,fill = smoke_gas_exposure)) + geom_histogram() + scale_fill_manual(values = c("yellow", "red", "blue", "#78BC61")) + theme_minimal() + labs(title = "Stacked histogram of FEV by smoke/gas exposure")
+```
+
+From the histogram of FEV by smoke and gas exposure, we can see a very large proportion of blue in each FEV column. This indicates that most of children are only exposed to gas but not second hand smoke. This pattern is true across all segmentations of FEV, except for those children with their FEV larger than 2800. In those segmentations, children are more likely to be not exposed by gas. It's also notable that children who are underweight only appear in groups of children which have FEV less than 2500. Similarly, children who are only exposed to second hand smokes but not gas only appear in groups of children which have FEV between 1700 and 2300. For other combinations of smoke/gas exposure, they seem to be appearing across the range of FEV. This observation suggest that maybe whether a child is exposed to second hand smoke or gas has no influence on this child's FEV. Lastly, it's clear that most children's FEV is about 2100, and the distribution looks like a normal distribution with the mean at 2000.
+
+```{r warning=FALSE, message=FALSE, eval = TRUE, echo = FALSE}
+df %>% ggplot() + aes(x=obesity_level, fill=smoke_gas_exposure) + geom_bar(position = "dodge") + scale_fill_brewer(palette = "PuOr") + theme_minimal() + labs(title="Barchart of BMI by smoke/gas exposure", x="BMI", y="count")
+```
+
+From the bar chart, we can see that most of children are only exposed to gas and not second hand smoke, no matter which obesity level they are. It's also clear that there are no children in underweight level who have been exposed only to second hand smoke. Lastly, we can also see that the distribution of four categories of smoke/gas exposure looks very similar in obese group and overweight group.
+
+```{r, eval = TRUE, echo = TRUE}
+df %>% ggplot() + aes(x=obesity_level, y=fev) + stat_summary(fun.data = "mean_sdl", geom = "errorbar") + stat_summary(fun.data = "mean_sdl")
+
+df %>% ggplot() + aes(x=smoke_gas_exposure, y=fev) + stat_summary(fun.data = "mean_sdl", geom = "errorbar") + stat_summary(fun.data = "mean_sdl")
+```
+
+From the max-min plot on obesity level and FEV, we can see that children in obese level has a mean of FEV being around 2250, which is the highest mean of FEV among all other groups. The second place is overweight group, with a mean of FEV being around 2250 as well. The children in normal group has their mean of FEV being 2000, and the children in underweight group has their mean of FEV being 1700. This observation indicates that children with higher BMI are more likely to have higher FEV in general. This conclusion is same to the conclusion draw from the stacked histogram.
+
+From the max-min plot on smoke/gas exposure and FEV, we can see that children who haven't been exposed to gas had their mean of FEV a little bit higher than children who have been exposed to gas. However, the difference in means are not significant. Moreover, children who haven't been exposed to second hand smoke had their max-min difference of FEV a little bit larger than children who have been exposed to second hand smoke. Overall speaking, there are not much difference on FEV in different categories of smoke/gas exposure. This conclusion is same to the conclusion draw from the stacked histogram.
+
+```{r, eval = TRUE, echo = FALSE}
+pm_pal <- colorNumeric(c('blue', 'yellow', 'red'), domain = df$pm25_mass, na.color = NA)
+
+df %>% drop_na() %>% leaflet() %>% addProviderTiles('OpenStreetMap') %>% addCircles(lat = ~lat, lng = ~lon, color=~pm_pal(pm25_mass), label=~round(pm25_mass,2), opacity = 1, fillOpacity = 1) %>% addLegend('bottomleft', pal = pm_pal, values=df$pm25_mass, title="pm2.5 concentration", opacity=1)
+```
+
+From the map we generates, we can see that towns around Los Angeles tend to have higher PM2.5 concentration. Especially for towns near River side, they had the most PM2.5 mass. For other towns far away from Los Angeles, such as those located around Santa Maria, they had lighter PM2.5 concentration. Such situation may be explained by that Los Angeles is close to the Pacific Ocean, so that the wind comes from the sea helps to reduce the concentration of PM2.5 at Los Angeles. And the PM2.5 pollution were brought by wind until they fall to the Riverside, which makes Riverside to have the worst PM2.5 concentration.
+
+```{r, message=FALSE, echo=FALSE, warning=FALSE}
+df %>% ggplot(aes(x = fev, y = pm25_mass)) + geom_point() + geom_smooth(method='lm', formula= y~x) + ggtitle("Scatterplot of FEV vs. PM2.5 concentration") + xlab("forced expiratory volume") + ylab("pm2.5 concentration")
+```
+
+```{r, message=FALSE, echo=FALSE, warning=FALSE}
+df %>% ggplot(aes(x=as.factor(pm25_mass), y=fev)) + geom_boxplot() + ggtitle("Boxplot of FEV with different PM2.5 concentration") + xlab("pm2.5 concentration") + ylab("forced expiratory volume")
+```
+
+From the scatterplot of FEV vs PM2.5 concentration, we see that there is only a very weak linear relationship between FEV and PM2.5 concentration. Similarly, we can't see a significant increasing or decreasing pattern from the box plots as well. The mean of FEV went up and down go from lowest PM2.5 concentration to highest concentration. Town with PM2.5 being 7.66 has the highest mean of FEV among others.
+
+```{r}
+ggplot(df, aes(x=weight, y=fev)) + geom_point() + geom_smooth(method="lm") + geom_smooth(method = "gam", col=2, formula = y ~ s(x, bs="cr", k=20))
+```
+
+From the plot, we can see the plot of linear association and non-linear association passing through the cluster of points. Most part of the non-linear regression line are below the linear regression line, while it's higher than the linear line when weight is between 65 to 100. Moreover, if we assume the gam regression line is a quadratic curve, then it is concave. Meanwhile, the linear line has a positive slope. Lastly, it notable that these two regression lines are not adjusted for age, sex, and race, which means that the coefficient of these lines may differ from the coefficient provided by the model.
+
+```{r}
+library(mgcv)
+
+lm_mod <- lm(fev ~ weight+agepft+as.factor(male)+as.factor(race), data=df)
+summary(lm_mod)
+```
+
+For this linear model, it's clear that the FEV is expected to be 463.43 if given all other predictors as 0. We can also see that the FEV is expected to increase 8.18 given a one-unit shift in the weight while holding other variables in the model constant. From the p value of weight, we can see that the weight is a significant linear predictor in the model. The R-squared is 0.3593, which means that the linear model explains 35.9% of variance in FEV. The adjusted R^2 is 0.355, which is not large.
+
+```{r}
+gam_mod <- gam(fev ~ s(weight, bs="cr", k=20)+agepft+as.factor(male)+as.factor(race), data=df)
+summary(gam_mod)
+```
+
+For this gam model, the FEV is expected to be 1173.83 if given all other predictors as 0. We can also see that the p value of smoothed weight is smaller than 0.001, which means the smoothed weight is a significant predictor in the model. We can also see that age and sex are significant, but that's not what we are interested in. It's notable that this non-linear model explains 38.8% of variance in FEV, which is larger than the linear model. The adjusted R^2 is 0.382, which means that this non-linear model fit the data better after considering the degree of freedom in the model.

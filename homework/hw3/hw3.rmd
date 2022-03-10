@@ -1,0 +1,261 @@
+---
+title: "Homework 3"
+author: "You Peng"
+date: '2022-03-07'
+output: html_document
+---
+
+```{r setup, echo=FALSE}
+knitr::opts_chunk$set(include  = TRUE)
+```
+
+```{r, echo=FALSE}
+library(stringr)
+library(tidytext)
+library(readr)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(wordcloud)
+```
+
+## APIs
+
+#### Using the NCBI API, look for papers that show up under the term “sars-cov-2 vaccine.” Look for the data in the pubmed database, and then retrieve the details of the paper as shown in the lab. How many papers were you able to find?
+
+Counts from the website extraction is 18,440.
+```{r counter-pubmed, eval=TRUE, echo=FALSE}
+# Downloading the website
+website <- xml2::read_html("https://pubmed.ncbi.nlm.nih.gov/?term=sars-cov-2-vaccine")
+
+# Finding the counts
+counts <- xml2::xml_find_first(website, "/html/body/main/div[9]/div[2]/div[2]/div[1]/div[1]/span")
+
+# Turning it into text
+counts <- as.character(counts)
+
+# Extracting the data using regex
+stringr::str_extract(counts, "[0-9,]+")
+```
+
+Counts from the API query is 18336, which is 4 less than the result from website extraction.
+
+```{r papers-covid-canada, eval=TRUE, echo=FALSE}
+library(httr)
+query_ids <- GET(
+  url   = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi",
+  query = list(
+    db = "pubmed",
+    term = "sars-cov-2 vaccine",
+    retmax = 20000
+  )
+)
+
+# Extracting the content of the response of GET
+ids <- httr::content(query_ids)
+
+counts <- as.character(ids)
+
+counts <- stringr::str_extract(counts, "<Count>[0-9,]+</Count>")
+counts <- stringr::str_remove_all(counts, "<Count>|</Count>")
+counts
+```
+
+#### Using the list of pubmed ids you retrieved, download the details of each paper using the query parameter rettype = abstract. If you get more than 250 ids, just keep the first 250.
+
+We will first obtain the ids of papers:
+
+```{r get-ids, eval = TRUE}
+# Turn the result into a character vector
+ids <- as.character(ids)
+
+# Find all the ids 
+ids <- stringr::str_extract_all(ids, "<Id>[1-9]+</Id>")[[1]]
+
+# Remove all the leading and trailing <Id> </Id>. Make use of "|"
+ids <- stringr::str_remove_all(ids, "<Id>|</Id>")
+ids <- ids[1:250]
+```
+
+We will then use these ids to get our papers:
+ 
+```{r get-abstracts, eval = TRUE}
+publications <- GET(
+  url   = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi",
+  query = list(
+    db = "pubmed",
+    id = paste(ids, collapse=","),
+    retmax = 250,
+    rettype = "abstract"
+
+  )
+)
+
+# Turning the output into character vector
+publications <- httr::content(publications)
+publications_txt <- as.character(publications)
+```
+
+The details of first 250 papers are stored in publications_txt.
+
+#### Create a dataset
+
+We want to build a dataset which includes:
+1. Pubmed ID number,
+2. Title of the paper,
+3. Name of the journal where it was published,
+4. Publication date, and
+5. Abstract of the paper (if any)
+
+First separate our papers and store them in a list,
+
+```{r one-string-per-response, eval = TRUE, echo=FALSE}
+pub_char_list <- xml2::xml_children(publications)
+pub_char_list <- sapply(pub_char_list, as.character)
+```
+
+then extract the abstracts of papers:
+
+```{r extracting-abstract, eval = TRUE}
+abstracts <- stringr::str_extract(pub_char_list, "<Abstract>(\\n|.)+</Abstract>")
+abstracts <- str_remove_all(abstracts, "</?[[:alpha:]]+>")
+abstracts <- str_replace_all(abstracts, "\\s+", " ")
+table(is.na(abstracts))
+```
+
+Then the titles of papers:
+
+```{r process-titles, eval = TRUE}
+titles <- stringr::str_extract(pub_char_list, "<ArticleTitle>(\\n|.)+</ArticleTitle>")
+titles <- str_remove_all(titles, "</?[[:alnum:]]+>")
+titles <- str_replace_all(titles, "\\s+", " ")
+table(is.na(titles))
+```
+
+Then names of the journals where each paper was published:
+
+```{r process-journal-titles, eval = TRUE}
+journals <- stringr::str_extract(pub_char_list, "<Title>(\\n|.)+</Title>")
+journals <- str_remove_all(journals, "</?[[:alnum:]]+>")
+journals <- str_replace_all(journals, "\\s+", " ")
+table(is.na(journals))
+```
+
+Then Publication dates:
+
+```{r process-dates, eval = TRUE}
+dates <- stringr::str_extract(pub_char_list, "<PubDate>(\\n|.)+</PubDate>")
+dates <- str_remove_all(dates, "</?[[:alnum:]]+>")
+dates <- str_replace_all(dates, "\\s+", " ")
+table(is.na(dates))
+```
+
+Finally, put everything together into a single `data.frame` and use
+`knitr::kable` to print the results
+
+```{r build-db, eval = TRUE, echo=FALSE}
+database <- data.frame(
+  PubMedId = ids,
+  Title = titles,
+  Journals = journals,
+  Date = dates,
+  Abstract = abstracts
+  
+)
+knitr::kable(database)
+```
+
+There are 250 rows and 5 columns in the database.
+
+```{r, echo=FALSE}
+dim(database)
+```
+
+## Text Mining
+
+First take a look at the most frequent tokens appear in abstracts:
+
+```{r, echo=FALSE}
+df <- read.csv("pubmed.csv")
+tokens <- df %>% select(abstract) %>% unnest_tokens(word, abstract) %>% group_by(word) %>% summarize(word_frequency = n()) %>% arrange(across(word_frequency, desc)) %>% head(20)
+
+tokens %>% ggplot(aes(x=reorder(word, word_frequency), y=word_frequency)) + geom_bar(stat='identity') + coord_flip()
+
+library(wordcloud)
+wordcloud(tokens$word, tokens$word_frequency)
+```
+
+We can see that some stopwords appear to be the most frequent ones in abstracts of papers. For example, words such as "the", "of", "and", "to", and "in" are the five most frequent ones. Meanwhile, words such as "covid", "patients", and "cancer" also appear in the top 20 frequent words list. These words did tell us some information about what these papers are about.
+
+Then we are going to take a look at the most frequent tokens in abstracts after removing all stopwords:
+
+```{r, echo=FALSE}
+tokens <- df %>% select(abstract) %>% unnest_tokens(word, abstract) %>% anti_join(stop_words, by="word") %>% group_by(word) %>% summarize(word_frequency = n()) %>% arrange(across(word_frequency, desc)) %>% head(20)
+
+tokens %>% ggplot(aes(x=reorder(word, word_frequency), y=word_frequency)) + geom_bar(stat='identity') + coord_flip()
+
+wordcloud(tokens$word, tokens$word_frequency)
+```
+
+We see that words such as "covid", "19", "patients", "cancer", and "prostate" become the top 5 most frequent words in abstracts. It's also interesting to see that the word "covid" and "19" have close frequencies, and the word "cancer" and "prostate" have close frequencies. This may suggest that these words tend to appear in pairs. We can explore more about these bi-grams by tokenizing the abstract into bi-grams and count them. We can also see some of our search terms such as "covid", "prostate cancer", and "preeclampsia" appear in the top 20 frequent words list. Generally speaking, after we removing stopwords, the list of frequent words appear to contain more information about the papers, we can infer what these papers are about by looking at these frequent tokens.
+
+#### We will present five most common tokens for each search term after removing stop-words.
+
+```{r, echo=FALSE}
+df %>% select(term) %>% distinct()
+```
+
+```{r, echo=FALSE}
+tibble <- df %>% unnest_tokens(word, abstract) %>% anti_join(stop_words, by="word") %>% count(word, term) %>% group_by(term) %>% arrange(desc(n), .by_group = TRUE) %>% top_n(5)
+print.data.frame(tibble)
+```
+
+
+```{r}
+tokens <- df %>% filter(term=="covid") %>% unnest_tokens(word, abstract) %>% anti_join(stop_words, by="word") %>% group_by(word) %>% summarize(word_frequency = n()) %>% arrange(across(word_frequency, desc)) %>% head(5)
+
+tokens %>% ggplot(aes(x=reorder(word, word_frequency), y=word_frequency)) + geom_bar(stat='identity') + coord_flip()
+```
+
+```{r}
+tokens <- df %>% filter(term=="meningitis") %>% unnest_tokens(word, abstract) %>% anti_join(stop_words, by="word") %>% group_by(word) %>% summarize(word_frequency = n()) %>% arrange(across(word_frequency, desc)) %>% head(5)
+
+tokens %>% ggplot(aes(x=reorder(word, word_frequency), y=word_frequency)) + geom_bar(stat='identity') + coord_flip()
+```
+
+```{r}
+tokens <- df %>% filter(term=="prostate cancer") %>% unnest_tokens(word, abstract) %>% anti_join(stop_words, by="word") %>% group_by(word) %>% summarize(word_frequency = n()) %>% arrange(across(word_frequency, desc)) %>% head(5)
+
+tokens %>% ggplot(aes(x=reorder(word, word_frequency), y=word_frequency)) + geom_bar(stat='identity') + coord_flip()
+```
+
+```{r}
+tokens <- df %>% filter(term=="cystic fibrosis") %>% unnest_tokens(word, abstract) %>% anti_join(stop_words, by="word") %>% group_by(word) %>% summarize(word_frequency = n()) %>% arrange(across(word_frequency, desc)) %>% head(5)
+
+tokens %>% ggplot(aes(x=reorder(word, word_frequency), y=word_frequency)) + geom_bar(stat='identity') + coord_flip()
+```
+
+```{r}
+tokens <- df %>% filter(term=="preeclampsia") %>% unnest_tokens(word, abstract) %>% anti_join(stop_words, by="word") %>% group_by(word) %>% summarize(word_frequency = n()) %>% arrange(across(word_frequency, desc)) %>% head(5)
+
+tokens %>% ggplot(aes(x=reorder(word, word_frequency), y=word_frequency)) + geom_bar(stat='identity') + coord_flip()
+```
+
+#### Next, we are going to tokenize the abstracts into bigrams. Here are 10 most common bigram and their visualization.
+
+```{r, echo=FALSE}
+tokens <- df %>% select(abstract) %>% unnest_tokens(bigram, abstract, token='ngrams', n=2) %>% group_by(bigram) %>% summarise(bigram_frequency = n()) %>% separate(bigram, c("word1", "word2"), extra="drop", remove=F, sep=" ", fill="right") %>% anti_join(stop_words, by=c("word1"="word")) %>% anti_join(stop_words, by=c("word2"="word")) %>% arrange(across(bigram_frequency, desc))
+
+tokens %>% head(10) %>% ggplot(aes(x=reorder(bigram, bigram_frequency), y=bigram_frequency)) + geom_bar(stat='identity') + coord_flip()
+```
+
+From the visualization, we can see that the bigram "covid 19" appears over 6500 times, which is the most frequently appeared bigram in papers. We can also see that "sars cov" and "cov 2" are close in their frequencies, this may indicates that they usually comes in the form of tri-grams. Moreover, "prostate cancer" did appear as a frequent bi-gram. These conclusions match up with our previous prediction on bigrams. Lastly, we can see that our search term "cystic fibrosis" also appears on the list.
+
+#### Lastly, we will calculate the TF-IDF value for each word-search term combination.
+
+```{r, echo=FALSE}
+tibble <- df %>% unnest_tokens(word, abstract) %>% anti_join(stop_words, by="word") %>% count(word, term) %>% bind_tf_idf(word, term, n) %>% group_by(term) %>% arrange(desc(tf_idf), .by_group = TRUE) %>% top_n(5)
+print.data.frame(tibble)
+```
+
+The result are different from question 1. For term "covid", tokens "coronavirus", "sars", and "cov" have replaced "19", "patient", "disease". For term "cystic fibrosis", tokens "cftr", "sweat" have replaced "patient", "disease". For term "meningitis", tokens "pachymeningitis", "meninges" have replaced "patient", "clinical". For term "preeclampsia", tokens "maternal", "gestational" have replaced "women", "pre". For term "prostate cancer", tokens "androgen", "psa", "prostatectomy", and "castration" have replaced "cancer", "patient", "disease", "treatment". This is reasonable, since we can see that the word "patient" appears in all papers from different search term, this makes it less representative under each search term and has a smaller ti-idf value in each search term. Similar reason applies to other words that are replaced. The 5 tokens from each search term with the highest TF-IDF value are now the most representative ones under each search term.

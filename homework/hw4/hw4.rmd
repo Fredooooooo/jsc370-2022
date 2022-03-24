@@ -1,0 +1,269 @@
+---
+title: "Homework4 - HPC and ML 2"
+output: html_document
+author: You Peng
+link-citations: yes
+---
+
+## HPC
+#### Problem 1: Make sure your code is nice
+Rewrite the following R functions to make them faster.
+
+```{r, echo=FALSE, include=T}
+library(parallel)
+library(foreach)
+library(doParallel)
+```
+
+```{r}
+# Total row sums
+fun1 <- function(mat) {
+  n <- nrow(mat)
+  ans <- double(n)
+  for (i in 1:n) {
+    ans[i] <- sum(mat[i, ])
+  }
+  ans
+}
+
+fun1alt <- function(mat) {
+  # YOUR CODE HERE
+  rowSums(mat)
+}
+
+# Cumulative sum by row
+fun2 <- function(mat) {
+  n <- nrow(mat)
+  k <- ncol(mat)
+  ans <- mat
+  for (i in 1:n) {
+    for (j in 2:k) {
+      ans[i,j] <- mat[i, j] + ans[i, j - 1]
+    }
+  }
+  ans
+}
+
+fun2alt <- function(mat) {
+  # YOUR CODE HERE
+  n <- nrow(mat)
+  ans <- mat
+  for(i in 1:n) {
+    ans[i,] <- cumsum(ans[i,])
+  }
+  ans
+}
+
+# Use the data with this code
+set.seed(2315)
+dat <- matrix(rnorm(200 * 100), nrow = 200)
+# Test for the first
+microbenchmark::microbenchmark(
+  fun1(dat),
+  fun1alt(dat), check = "equivalent")
+options(microbenchmark.unit="relative")
+# Test for the second
+microbenchmark::microbenchmark(
+  fun2(dat),
+  fun2alt(dat), check = "equivalent")
+options(microbenchmark.unit="relative")
+```
+
+#### Problem 2: Make things run faster with parallel computing
+The following function allows simulating PI
+
+```{r}
+sim_pi <- function(n = 1000, i = NULL) {
+  p <- matrix(runif(n*2), ncol = 2)
+  mean(rowSums(p^2) < 1) * 4
+}
+
+# Here is an example of the run
+set.seed(156)
+sim_pi(1000) # 3.132
+```
+
+In order to get accurate estimates, we can run this function multiple times, with the following code:
+
+```{r}
+# This runs the simulation a 4,000 times, each with 10,000 points
+set.seed(1231)
+system.time({
+  ans <- unlist(lapply(1:4000, sim_pi, n = 10000))
+  print(mean(ans))
+})
+```
+
+Rewrite the previous code using parLapply() to make it run faster. Make sure you set the seed using
+clusterSetRNGStream():
+
+```{r}
+# YOUR CODE HERE
+system.time({
+  # YOUR CODE HERE
+  cl <- makePSOCKcluster(4)
+  clusterExport(cl, varlist=NULL, envir = environment())
+  
+  clusterSetRNGStream(cl, 370)
+  
+  ans <- unlist(parLapply(cl, 1:4000, sim_pi, n = 10000))
+  print(mean(ans))
+  stopCluster(cl)
+})
+```
+
+## ML
+
+For this question we will use the hitters dataset, which consists of data for 332 major league baseball players. The data are here https://github.com/JSC370/jsc370-2022/tree/main/data/hitters. The main goal is to predict players’ salaries (variable Salary) based on the features in the data. To do so you will replicate many of the concepts in labs 11 and 12 (trees, bagging, random forest, boosting and xgboost). Please split the data into training and testing sets (70-30) for all questions.
+
+```{r, warning=FALSE, message=FALSE, echo=FALSE, warning=FALSE}
+library(tidyverse)
+library(rpart)
+library(rpart.plot)
+library(randomForest)
+library(gbm)
+library(xgboost)
+
+hitter<-read.csv("hitters.csv")
+hitter <- hitter %>% filter(!is.na(Salary))
+head(hitter)
+```
+I've already imported the dataset and filtered out all observations with NA value in their Salary column.
+- First split the `hitter` data into training and testing (70-30%)
+
+```{r, echo=T, eval=T, warning=FALSE}
+set.seed(67)
+train_idx <- sample(nrow(hitter), round(0.7 * nrow(hitter)))
+train <- hitter[train_idx,]
+test <- hitter[-train_idx,]
+```
+
+#### Regression tree
+
+- Fit a regression tree to predict Salary, and the plot of full tree is shown below. The tree has 7 layers and is definitely overfitting with too many splits.
+
+```{r, echo=FALSE, eval=T, warning=FALSE}
+hitter_tree <- rpart(Salary~., data=train, method = "anova",
+                     control = list(minsplit=10, minbucket=3, cp=0, xval=10))
+
+rpart.plot(hitter_tree)
+```
+
+- Plot the complexity parameter table for an rpart fit and we find the optimal cp to prune the tree. The optimal CP we found is 0.01594352, which corresponds to six splits. And the pruned tree is shown below. We can see that 45% of all players, which is the largest category, are predicted to have a salary of 203 (in thousands of dollars). And 22% are predicted to have a salary of 773, 17% are predicted to have a salary of 478. These are the three largest group of players among leaves.
+
+```{r, echo=FALSE, eval=T, warning=FALSE}
+plotcp(hitter_tree)
+printcp(hitter_tree)
+
+optimalcp = hitter_tree$cptable[which.min(hitter_tree$cptable[,"xerror"]), "CP"]
+
+optimalcp
+
+hitter_tree_prune <- prune(hitter_tree, cp=optimalcp)
+rpart.plot(hitter_tree_prune)
+```
+
+- Compute the test MSE of the pruned tree to be 133709.
+
+```{r, echo=FALSE, eval=T, warning=FALSE}
+tree_pred <- predict(hitter_tree_prune, test)
+test_tree <- cbind(test, tree_pred)
+
+tree_mse <- sum((test_tree$tree_pred - test_tree$Salary)^2) / dim(test_tree)[1]
+tree_mse
+
+```
+
+- Fit the tree with the optimal complexity parameter to the full data (training + testing)
+
+```{r,echo=FALSE, eval=T, warning=FALSE}
+hitter_tree  <-rpart(Salary~., data=hitter, method="anova",
+                     control = list(cp=optimalcp))
+
+plotcp(hitter_tree)
+```
+
+- Out of Bag (OOB) error for tree is 143.866863 as we shown below.
+ 
+```{r,echo=FALSE, eval=T, warning=FALSE}
+hitter_tree$cptable
+sprintf("OOB error: %f", min(hitter_tree$cptable[,'xerror']) * nrow(hitter))
+```
+
+#### Bagging, and construct a variable importance plot.
+
+- First of all, we take a look at the OOB MSE as well as the variable importance plot. From the summary of the model, we can see that averaging across all 500 trees provides an OOB MSE being 88152.08. And the sum of variable importance is 41014668.033028. Their variable importance plot is shown below as well.
+
+```{r, echo=FALSE, eval=T, warning=FALSE}
+set.seed(67)
+hitter_bag <- randomForest(Salary~., data=train, mtry=19, na.action = na.omit)
+hitter_bag
+# mean(hitter_bag$mse)
+
+varImpPlot(hitter_bag, n.var = 19, col="red")
+sprintf("Sum of variable importance: %f", sum(importance(hitter_bag)))
+```
+
+- Compute the test MSE of the bagging method to be 68673.45. This MSE is much smaller than the test MSE of the pruned tree, which was 133709. This means that the bagging method did performs better than the single regression tree model.
+
+```{r, echo=FALSE, eval=T, warning=FALSE}
+tree_pred <- predict(hitter_bag, test)
+test_tree <- cbind(test, tree_pred)
+
+tree_mse <- sum((test_tree$tree_pred - test_tree$Salary)^2) / dim(test_tree)[1]
+tree_mse
+
+```
+
+- Out of Bag (OOB) error for tree is 281.929 as we shown below.
+
+```{r, echo=FALSE, eval=T, warning=FALSE}
+set.seed(67)
+hitter_bag <- randomForest(Salary~., data=hitter, mtry=19, na.action = na.omit)
+hitter_bag
+mean(hitter_bag$mse)
+
+sqrt(hitter_bag$mse[which.min(hitter_bag$mse)])
+```
+
+
+#### Random Forest, and construct a variable importance plot.
+
+- First of all, we take a look at the OOB MSE as well as the variable importance plot. From the summary of the random forest model, we can see that averaging across all 500 trees provides an OOB MSE being 84191.54. And the sum of variable importance is 41218342.997880. Their variable importance plot is shown below as well.
+
+```{r, echo=FALSE, eval=T, warning=FALSE}
+set.seed(67)
+hitter_rf <- randomForest(Salary~., data=train, na.action = na.omit)
+hitter_rf
+
+varImpPlot(hitter_rf, n.var = 19, col="blue")
+sprintf("Sum of variable importance: %f", sum(importance(hitter_rf)))
+```
+
+- Compute the test MSE of the bagging method to be 64187.78. This MSE is much smaller than the test MSE of the pruned tree, which was 133709. This MSE is also smaller than the test MSE of bagging method, which is 68673.45. This indicates that the random forest method performs better than the single regression tree model, and also better than bagging without feature selection.
+
+```{r, echo=FALSE, eval=T, warning=FALSE}
+tree_pred <- predict(hitter_rf, test)
+test_tree <- cbind(test, tree_pred)
+
+tree_mse <- sum((test_tree$tree_pred - test_tree$Salary)^2) / dim(test_tree)[1]
+tree_mse
+
+```
+
+- Out of Bag (OOB) error for tree is 275.9121 as we shown below.
+
+```{r, echo=FALSE, eval=T, warning=FALSE}
+set.seed(67)
+hitter_rf <- randomForest(Salary~., data=hitter, na.action = na.omit)
+hitter_rf
+mean(hitter_rf$mse)
+
+sqrt(hitter_rf$mse[which.min(hitter_rf$mse)])
+```
+
+```{r}
+
+```
+
+

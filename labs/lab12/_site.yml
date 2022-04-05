@@ -3,7 +3,7 @@ output_dir: "."
 navbar:
   title: "JSC370 Final Project"
   left:
-    - text: "Home"
+    - text: "Project"
       href: index.html
     - text: "Lab Description"
       href: lab12-website.html
